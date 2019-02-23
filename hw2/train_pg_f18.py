@@ -42,28 +42,19 @@ def build_mlp(input_placeholder, output_size, scope, n_layers, size, activation=
         Hint: use tf.layers.dense
     """
     # YOUR CODE HERE
+    with tf.variable_scope(scope):
+        x = input_placeholder
 
-    #scope a mettre dans nom des var ?
-    obs_shape = input_placeholder.shape[1]
-    num_data = input_placeholder.shape[0]
+        #hidden layers
+        for i in range(1, n_layers):
+            x = tf.layers.dense(inputs=x, units=size, activation=activation, name='layer%d'%i)
 
-    model = tf.keras.Sequential([\
-        tf.keras.layers.Dense(size, activation = activation, name = 'firstlayer', input_shape=(obs_shape,))])
+        #output layer
+        output_size = output_size[-1]
+        output_placeholder = tf.layers.dense(inputs=x, units=output_size,\
+         activation=output_activation, name='lastlayer')
 
-    #hidden layers
-    for i in range(1, n_layers):
-        hid_layer = tf.keras.layers.Dense(size, activation = activation, name = 'hid%d'%i)
-        model.add(hid_layer)
-
-    #output layer
-    model.add(tf.keras.layers.Dense(output_size, activation = output_activation, name = 'lastlayer'))
-    #compile
-    #output_placeholder = model.compile(optimizer='adam',loss='mean_squared_error', metrics=['accuracy'])
-
-    output_placeholder = tf.placeholder(dtype=tf.float32, shape=[output_size])
-
-    #raise NotImplementedError
-    return output_placeholder
+        return output_placeholder
 
 def pathlength(path):
     return len(path["reward"])
@@ -126,7 +117,8 @@ class Agent(object):
         else:
             sy_ac_na = tf.placeholder(shape=[None, self.ac_dim], name="ac", dtype=tf.float32)
         # YOUR CODE HERE
-        sy_adv_n = tf.placeholder(shape=[None], name="adv", dtype=tf.float32)
+        # adv = r(t), avec ou sans baseline
+        sy_adv_n = tf.placeholder(shape=[None], name="adv", dtype=tf.float32) #moi
         return sy_ob_no, sy_ac_na, sy_adv_n
 
 
@@ -159,16 +151,25 @@ class Agent(object):
                 pass in self.size for the 'size' argument.
         """
         #raise NotImplementedError
+        batch_size = sy_ob_no.shape[0]
+
         if self.discrete:
             # YOUR_CODE_HERE
             sy_logits_na = None
-            sy_logits_na = self.build_mlp(sy_ob_no, output_size, scope, self.n_layers, self.size)
+            # ouput size = (batch_size, self.ac_dim) ou self.ac_dim?
+            sy_logits_na = build_mlp(sy_ob_no, (batch_size, self.ac_dim), "ob_discrete",\
+             self.n_layers, self.size) #moi
             return sy_logits_na
         else:
             # YOUR_CODE_HERE
             sy_mean = None
             sy_logstd = None
-            sy_mean = self.build_mlp(sy_ob_no, output_size, scope, self.n_layers, self.size)
+
+            sy_mean = build_mlp(sy_ob_no, (batch_size, self.ac_dim), "ob_continuous",\
+             self.n_layers, self.size) # moi
+            #sy_mean = tf.reduce_mean(out)
+            sy_logstd = tf.Variable(tf.zeros([self.ac_dim,])) # moi
+
             return (sy_mean, sy_logstd)
 
     #========================================================================================#
@@ -198,15 +199,19 @@ class Agent(object):
 
                  This reduces the problem to just sampling z. (Hint: use tf.random_normal!)
         """
-        raise NotImplementedError
+        #raise NotImplementedError
         if self.discrete:
             sy_logits_na = policy_parameters
             # YOUR_CODE_HERE
             sy_sampled_ac = None
+            sy_sampled_ac = tf.squeeze(tf.multinomial(sy_logits_na, 1), axis=[1]) #moi
+
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
             sy_sampled_ac = None
+            sy_sampled_ac = tf.random_normal(shape = tf.shape(sy_mean)) * sy_logstd + sy_mean #moi
+
         return sy_sampled_ac
 
     #========================================================================================#
@@ -235,21 +240,25 @@ class Agent(object):
                 For the discrete case, use the log probability under a categorical distribution.
                 For the continuous case, use the log probability under a multivariate gaussian.
         """
-        raise NotImplementedError
+        #raise NotImplementedError
         if self.discrete:
             sy_logits_na = policy_parameters
             # YOUR_CODE_HERE
-            sy_logprob_n = None
+            sy_logprob_n = tf.nn.softmax_cross_entropy_with_logits_v2(labels = sy_ac_na, \
+             logits = sy_logits_na)
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
             sy_logprob_n = None
+            mnd = tf.contrib.distributions.MultivariateNormalDiag(loc = sy_mean, scale_diag = tf.exp(sy_logstd))
+            sy_logprob_n = mnd.prob(sy_ac_na)
+
         return sy_logprob_n
 
     def build_computation_graph(self):
         """
             Notes on notation:
-
+MultivariateNormalDiag
             Symbolic variables (=can hold an expression) have the prefix sy_, to
             distinguish them from the numerical values that are computed later
             in the function
@@ -286,6 +295,7 @@ class Agent(object):
         # Loss Function and Training Operation
         #========================================================================================#
         loss = None # YOUR CODE HERE
+        loss = tf.reduce_mean(tf.multiply( - self.sy_logprob_n, self.sy_adv_n)) #moi (un - en + ?)
         self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
 
         #========================================================================================#
@@ -587,10 +597,10 @@ def train_PG(
     # Observation and action sizes
     ob_dim = env.observation_space.shape[0]
     ac_dim = env.action_space.n if discrete else env.action_space.shape[0]
-
-    #moi pour test build_mlp
-    input_placeholder = tf.placeholder(dtype = tf.float32, shape = [None, ob_dim])
-    build_mlp(input_placeholder,1,"nn_baseline",n_layers=2,size=10)
+    print(ac_dim)
+    # moi pour test build_mlp
+    # input_placeholder = tf.placeholder(dtype = tf.float32, shape = [None, ob_dim])
+    # build_mlp(input_placeholder,1,"nn_baseline",n_layers=2,size=10)
 
     #========================================================================================#
     # Initialize Agent
@@ -624,6 +634,7 @@ def train_PG(
 
     # tensorflow: config, session, variable initialization
     agent.init_tf_sess()
+
 
     #========================================================================================#
     # Training Loop
