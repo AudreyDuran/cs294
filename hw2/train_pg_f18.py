@@ -4,6 +4,19 @@ Adapted for CS294-112 Fall 2017 by Abhishek Gupta and Joshua Achiam
 Adapted for CS294-112 Fall 2018 by Michael Chang and Soroush Nasiriany
 
 ex : python3 train_pg_f18.py Hopper-v2
+ajouter --render pr voir animation
+
+Probleme5
+python3 train_pg_f18.py CartPole-v0 -n 100 -b 1000 -e 3 -dna --exp_name sb_no_rtg_dna --render
+python3 train_pg_f18.py CartPole-v0 -n 100 -b 1000 -e 3 -rtg -dna --exp_name sb_rtg_dna --render
+python3 train_pg_f18.py CartPole-v0 -n 100 -b 1000 -e 3 -rtg --exp_name sb_rtg_na --render
+python3 train_pg_f18.py CartPole-v0 -n 100 -b 5000 -e 3 -dna --exp_name lb_no_rtg_dna --render
+python3 train_pg_f18.py CartPole-v0 -n 100 -b 5000 -e 3 -rtg -dna --exp_name lb_rtg_dna --render
+python3 train_pg_f18.py CartPole-v0 -n 100 -b 5000 -e 3 -rtg --exp_name lb_rtg_na --render
+python3 train_pg_f18.py InvertedPendulum-v2 -ep 1000 --discount 0.9 -n 100 -e 3 -l 2 -s 64 -b 1000 -lr 5e-3 -rtg --exp_name ip_b1000_r5e-3 --render
+
+Probleme 7
+python3 train_pg_f18.py LunarLanderContinuous-v2 -ep 1000 --discount 0.99 -n 100 -e 3 -l 2 -s 64 -b 40000 -lr 0.005 -rtg --nn_baseline --exp_name ll_b40000_r0.005
 
 """
 import numpy as np
@@ -50,7 +63,6 @@ def build_mlp(input_placeholder, output_size, scope, n_layers, size, activation=
             x = tf.layers.dense(inputs=x, units=size, activation=activation, name='layer%d'%i)
 
         #output layer
-        output_size = output_size[-1]
         output_placeholder = tf.layers.dense(inputs=x, units=output_size,\
          activation=output_activation, name='lastlayer')
 
@@ -155,20 +167,17 @@ class Agent(object):
 
         if self.discrete:
             # YOUR_CODE_HERE
-            sy_logits_na = None
-            # ouput size = (batch_size, self.ac_dim) ou self.ac_dim?
-            sy_logits_na = build_mlp(sy_ob_no, (batch_size, self.ac_dim), "ob_discrete",\
+            # ouput size = (batch_size, self.ac_dim) ou self.ac_dim? rep 2
+            sy_logits_na = build_mlp(sy_ob_no, self.ac_dim, "ob_discrete",\
              self.n_layers, self.size) #moi
             return sy_logits_na
         else:
             # YOUR_CODE_HERE
-            sy_mean = None
-            sy_logstd = None
-
-            sy_mean = build_mlp(sy_ob_no, (batch_size, self.ac_dim), "ob_continuous",\
+            #(batch_size, self.ac_dim)
+            sy_mean = build_mlp(sy_ob_no, self.ac_dim, "ob_continuous",\
              self.n_layers, self.size) # moi
             #sy_mean = tf.reduce_mean(out)
-            sy_logstd = tf.Variable(tf.zeros([self.ac_dim,])) # moi
+            sy_logstd = tf.Variable(tf.zeros([self.ac_dim,])) # moi ou get_variable
 
             return (sy_mean, sy_logstd)
 
@@ -209,8 +218,7 @@ class Agent(object):
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
-            sy_sampled_ac = None
-            sy_sampled_ac = tf.random_normal(shape = tf.shape(sy_mean)) * sy_logstd + sy_mean #moi
+            sy_sampled_ac = tf.random_normal(shape = tf.shape(sy_mean)) * tf.exp(sy_logstd) + sy_mean #moi
 
         return sy_sampled_ac
 
@@ -244,14 +252,17 @@ class Agent(object):
         if self.discrete:
             sy_logits_na = policy_parameters
             # YOUR_CODE_HERE
-            sy_logprob_n = tf.nn.softmax_cross_entropy_with_logits_v2(labels = sy_ac_na, \
-             logits = sy_logits_na)
+            sy_logprob_n = tf.nn.sparse_softmax_cross_entropy_with_logits(
+                labels = sy_ac_na,
+                logits = sy_logits_na)
+
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
-            sy_logprob_n = None
-            mnd = tf.contrib.distributions.MultivariateNormalDiag(loc = sy_mean, scale_diag = tf.exp(sy_logstd))
-            sy_logprob_n = mnd.prob(sy_ac_na)
+            mnd = tf.contrib.distributions.MultivariateNormalDiag(
+                loc = sy_mean,
+                scale_diag = tf.exp(sy_logstd))
+            sy_logprob_n = mnd.log_prob(sy_ac_na)
 
         return sy_logprob_n
 
@@ -294,9 +305,10 @@ MultivariateNormalDiag
         #                           ----------PROBLEM 2----------
         # Loss Function and Training Operation
         #========================================================================================#
-        loss = None # YOUR CODE HERE
-        loss = tf.reduce_mean(tf.multiply( - self.sy_logprob_n, self.sy_adv_n)) #moi (un - en + ?)
-        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
+        # YOUR CODE HERE
+        self.loss = tf.reduce_mean(tf.multiply(self.sy_logprob_n, self.sy_adv_n)) #moi (un - en + ?)
+        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+
 
         #========================================================================================#
         #                           ----------PROBLEM 6----------
@@ -306,7 +318,6 @@ MultivariateNormalDiag
         # neural network baseline. These will be used to fit the neural network baseline.
         #========================================================================================#
         if self.nn_baseline:
-            raise NotImplementedError
             self.baseline_prediction = tf.squeeze(build_mlp(
                                     self.sy_ob_no,
                                     1,
@@ -314,8 +325,9 @@ MultivariateNormalDiag
                                     n_layers=self.n_layers,
                                     size=self.size))
             # YOUR_CODE_HERE
-            self.sy_target_n = None
-            baseline_loss = None
+            self.sy_target_n = tf.placeholder(shape=[None], name="target", dtype=tf.float32) # moi
+            #baseline_loss = tf.reduce_mean(tf.multiply(self.sy_logprob_n, (self.sy_adv_n - self.baseline_prediction))) # moi
+            baseline_loss = (self.sy_target_n - self.baseline_prediction)**2 # L2 loss
             self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(baseline_loss)
 
     def sample_trajectories(self, itr, env):
@@ -343,8 +355,8 @@ MultivariateNormalDiag
             #====================================================================================#
             #                           ----------PROBLEM 3----------
             #====================================================================================#
-            raise NotImplementedError
-            ac = None # YOUR CODE HERE
+            # YOUR CODE HERE
+            ac = self.sess.run(self.sy_sampled_ac, feed_dict={self.sy_ob_no : ob[None]})
             ac = ac[0]
             acs.append(ac)
             ob, rew, done, _ = env.step(ac)
@@ -427,10 +439,33 @@ MultivariateNormalDiag
             like the 'ob_no' and 'ac_na' above.
         """
         # YOUR_CODE_HERE
-        if self.reward_to_go:
-            raise NotImplementedError
-        else:
-            raise NotImplementedError
+        num_paths = len(re_n) #101
+        sum_of_path_lengths = np.sum(len(re_n[i]) for i in range(num_paths)) #1010
+
+        q_n = np.zeros((sum_of_path_lengths, ))
+
+        if self.reward_to_go: # reward-to-go PG
+            i = 0
+            # For each trajectory
+            for re in re_n:
+                # For each timestep in the trajectory
+                T = len(re)
+                for t in range(T):
+                    #r = re[t] * self.gamma**t
+                    q_n[i] = np.sum(re[tp] * self.gamma**(tp - t) for tp in range(t, T))
+                    i += 1
+
+        else: # trajectory-based PG
+            i = 0
+            for re in re_n:
+                # reset the reward for this new trajectory
+                r = 0
+                for t in range(len(re)):
+                    # add next reward to the current reward
+                    r += re[t] * self.gamma**t
+                    q_n[i] = r
+                    i+=1
+
         return q_n
 
     def compute_advantage(self, ob_no, q_n):
@@ -462,8 +497,17 @@ MultivariateNormalDiag
             # Hint #bl1: rescale the output from the nn_baseline to match the statistics
             # (mean and std) of the current batch of Q-values. (Goes with Hint
             # #bl2 in Agent.update_parameters.
-            raise NotImplementedError
-            b_n = None # YOUR CODE HERE
+
+
+            # YOUR CODE HERE
+
+            # expected state-condition return predicted
+            b_n = self.sess.run(
+                self.baseline_prediction,
+                feed_dict={self.sy_ob_no : ob_no})
+            # Nornalize b_n to match the statistics of the current batch "reward to go"
+            b_n = (b_n - np.mean(q_n) ) / np.std(q_n)
+            # Substract b_n from the "reward to go"
             adv_n = q_n - b_n
         else:
             adv_n = q_n.copy()
@@ -497,8 +541,13 @@ MultivariateNormalDiag
         if self.normalize_advantages:
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1.
-            raise NotImplementedError
-            adv_n = None # YOUR_CODE_HERE
+
+            # YOUR_CODE_HERE
+            # Compute mean and standard derviation
+            mu = np.mean(adv_n)
+            std = np.std(adv_n)
+            adv_n = (adv_n - mu) / (std + 1e-8)
+
         return q_n, adv_n
 
     def update_parameters(self, ob_no, ac_na, q_n, adv_n):
@@ -534,8 +583,16 @@ MultivariateNormalDiag
             # Agent.compute_advantage.)
 
             # YOUR_CODE_HERE
-            raise NotImplementedError
-            target_n = None
+
+            # Set up targets and inputs for the baseline
+            target_n =(q_n - np.mean(q_n)) / np.std(q_n)
+
+
+            # Fit it to current batch in order to use for the next iter
+            self.sess.run(
+                self.baseline_update_op,
+                feed_dict={self.sy_target_n : target_n, self.sy_ob_no : ob_no})
+
 
         #====================================================================================#
         #                           ----------PROBLEM 3----------
@@ -549,7 +606,14 @@ MultivariateNormalDiag
         # and after an update, and then log them below.
 
         # YOUR_CODE_HERE
-        raise NotImplementedError
+
+        # Call the update operation with tf session
+        _, loss_value, logprob = self.sess.run(
+            [self.update_op, self.loss, self.sy_logprob_n ],
+            feed_dict={self.sy_adv_n : adv_n, self.sy_ob_no : ob_no , \
+            self.sy_ac_na : ac_na })
+
+        return (loss_value, np.sum(logprob))
 
 
 def train_PG(
@@ -597,7 +661,6 @@ def train_PG(
     # Observation and action sizes
     ob_dim = env.observation_space.shape[0]
     ac_dim = env.action_space.n if discrete else env.action_space.shape[0]
-    print(ac_dim)
     # moi pour test build_mlp
     # input_placeholder = tf.placeholder(dtype = tf.float32, shape = [None, ob_dim])
     # build_mlp(input_placeholder,1,"nn_baseline",n_layers=2,size=10)
@@ -643,6 +706,7 @@ def train_PG(
     total_timesteps = 0
     for itr in range(n_iter):
         print("********** Iteration %i ************"%itr)
+        # 1.Generate samples
         paths, timesteps_this_batch = agent.sample_trajectories(itr, env)
         total_timesteps += timesteps_this_batch
 
@@ -652,14 +716,18 @@ def train_PG(
         ac_na = np.concatenate([path["action"] for path in paths])
         re_n = [path["reward"] for path in paths]
 
+        # 2. Estimate the return
         q_n, adv_n = agent.estimate_return(ob_no, re_n)
-        agent.update_parameters(ob_no, ac_na, q_n, adv_n)
+        # 3. Improve the policy: update params with policy gradient
+        loss, logprob = agent.update_parameters(ob_no, ac_na, q_n, adv_n) # moi ajout loss
 
         # Log diagnostics
         returns = [path["reward"].sum() for path in paths]
         ep_lengths = [pathlength(path) for path in paths]
         logz.log_tabular("Time", time.time() - start)
         logz.log_tabular("Iteration", itr)
+        logz.log_tabular("Objectif", loss) # moi
+        logz.log_tabular("Loss", - logprob) # moi
         logz.log_tabular("AverageReturn", np.mean(returns))
         logz.log_tabular("StdReturn", np.std(returns))
         logz.log_tabular("MaxReturn", np.max(returns))
@@ -732,7 +800,7 @@ def main():
         processes.append(p)
         # if you comment in the line below, then the loop will block
         # until this process finishes
-        # p.join()
+        p.join()
 
     for p in processes:
         p.join()
